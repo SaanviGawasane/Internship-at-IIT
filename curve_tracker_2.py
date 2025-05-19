@@ -34,7 +34,7 @@ class CasADiMPCSineTracker:
         self._mode_srv = rospy.ServiceProxy("/mavros/set_mode",   SetMode)
 
         # Build MPC
-        self._build_mpc(horizon=10, dt=0.1)
+        self._build_mpc(horizon=15, dt=0.05)
 
         # Startup
         self._wait_for_fcu()
@@ -47,7 +47,7 @@ class CasADiMPCSineTracker:
         self.start_y = self.pose.position.y
 
         # Run MPC for 30 s
-        self._run(duration=100.0, dt=0.1)
+        self._run(duration=200.0, dt=0.1)
 
         # Stop and plot
         self._vel_pub.publish(TwistStamped())
@@ -101,8 +101,8 @@ class CasADiMPCSineTracker:
     def _build_mpc(self, horizon, dt):
         N = horizon
         # weights
-        Q = np.diag([50, 50, 20])     # x, y, yaw
-        R = np.diag([0.05, 0.05, 0.005])  # vx, vy, w
+        Q = np.diag([50, 50, 40])     # x, y, yaw
+        R = np.diag([0.05, 0.4, 0.01])  # vx, vy, w
 
         opti = ca.Opti()
         X = opti.variable(3, N+1)   # states: x,y,yaw
@@ -123,11 +123,23 @@ class CasADiMPCSineTracker:
             opti.subject_to(st_next == st + dt*f)
 
             # bounds per step
-            opti.subject_to(opti.bounded(-2.0, U[0,k], 2.0))
-            opti.subject_to(opti.bounded(-2.0, U[1,k], 2.0))
+            opti.subject_to(opti.bounded(-1.8, U[0,k], 1.8))
+            opti.subject_to(opti.bounded(-1.8, U[1,k], 1.8))
             opti.subject_to(opti.bounded(-1.0, U[2,k], 1.0))
 
-        # initial state constraint
+        delta_vx_max = 0.5
+        delta_vy_max = 0.5
+        delta_w_max = 0.2
+
+        for k in range(N-1):  # loop over horizon minus one (since we compare k to k+1)
+            # vx rate constraint
+            opti.subject_to(opti.bounded(-delta_vx_max, U[0, k+1] - U[0, k], delta_vx_max))
+            # vy rate constraint
+            opti.subject_to(opti.bounded(-delta_vy_max, U[1, k+1] - U[1, k], delta_vy_max))
+            # yaw rate constraint
+            opti.subject_to(opti.bounded(-delta_w_max, U[2, k+1] - U[2, k], delta_w_max))
+            # initial state constraint
+            
         opti.subject_to(X[:,0] == P[0:3])
 
         opti.minimize(obj)
@@ -146,7 +158,7 @@ class CasADiMPCSineTracker:
 
     #— desired trajectory
     def _desired(self, t):
-        speed_sp = 1.0
+        speed_sp = 0.7
         A        = 2.0
         ω        = 0.5
         x_d  = self.start_x + speed_sp*t
